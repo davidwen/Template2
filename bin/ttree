@@ -75,6 +75,7 @@ my $suffix   = $config->suffix;
 my $binmode  = $config->binmode;
 my $depends  = $config->depend;
 my $depsfile = $config->depend_file;
+my $watch    = $config->watch;
 my ($n_proc, $n_unmod, $n_skip, $n_copy, $n_link, $n_mkdir) = (0) x 6;
 
 my $srcdir   = $config->src
@@ -217,6 +218,21 @@ if ($verbose) {
 my $template = $ttmodule->new($ttopts)
     || die $ttmodule->error();
 
+if ($watch) {
+    $|++;
+    my $latest_mtime = get_latest_mtime();
+    print("ttree is polling for changes. Press Ctrl-C to stop.\n");
+    while (1) {
+        my $mtime = get_latest_mtime();
+        if ($mtime > $latest_mtime) {
+            print("*** Processing files\n");
+            process_tree();
+            $latest_mtime = $mtime;
+        }
+        sleep 1;
+    }
+}
+
 if (@ARGV) {
     # explicitly process files specified on command lines 
     foreach my $file (@ARGV) {
@@ -256,6 +272,44 @@ exit(0);
 # END 
 #========================================================================
 
+#------------------------------------------------------------------------
+# process_tree($dir)
+#
+# Walks the directory tree starting at $dir or the current directory
+# if unspecified, returning the latest modify time of all the files
+#------------------------------------------------------------------------
+
+sub get_latest_mtime {
+    my $latest = 0;
+    my ($file, $path, $abspath);
+    my $dir = shift;
+    local *DIR;
+
+    my $absdir = join('/', $srcdir ? $srcdir : (), defined $dir ? $dir : ());
+    $absdir ||= '.';
+
+    opendir(DIR, $absdir) || do { warn "$absdir: $!\n"; return undef; };
+
+    FILE: while (defined ($file = readdir(DIR))) {
+        next if $file eq '.' || $file eq '..';
+        $path = defined $dir ? "$dir/$file" : $file;
+        $abspath = "$absdir/$file";
+
+        my $cur = (stat($abspath))[9];
+        if ($cur && $latest < $cur) {
+            $latest = $cur;
+        }
+
+        if (-d $abspath) {
+            $cur = get_latest_mtime($path);
+            if ($cur && $latest < $cur) {
+                $latest = $cur;
+            }
+        }
+    }
+    closedir(DIR);
+    return $latest;
+}
 
 #------------------------------------------------------------------------
 # process_tree($dir)
@@ -604,6 +658,7 @@ sub read_config {
         'colour|color'=> { DEFAULT => 0 },
         'summary'     => { DEFAULT => 0 },
         'all|a'       => { DEFAULT => 0 },
+        'watch|w'     => { DEFAULT => 0 },
         'define=s%',
         'suffix=s%',
         'binmode=s',
@@ -794,6 +849,7 @@ Options:
    -p      (--preserve)     Preserve file ownership and permission
    -n      (--nothing)      Do nothing, just print summary (enables -v)
    -v      (--verbose)      Verbose mode. Use twice for more verbosity: -v -v
+   -w      (--watch)        Watch for changes and process files on changes
    -h      (--help)         This help
    -s DIR  (--src=DIR)      Source directory
    -d DIR  (--dest=DIR)     Destination directory
